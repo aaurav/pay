@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct Params {
     #[schemars(
-        description = "Fully qualified name returned by search_skills (e.g. 'solana-foundation/google/bigquery')"
+        description = "Fully qualified name returned by search_catalog or list_catalog (e.g. 'solana-foundation/google/bigquery')"
     )]
     pub fqn: String,
 }
 
-/// Full skill detail returned to the LLM after selection.
+/// Full catalog entry detail returned to the LLM after selection.
 #[derive(Debug, Serialize)]
-struct SkillDetail {
+struct CatalogEntryDetail {
     fqn: String,
     title: String,
     description: String,
@@ -46,25 +46,34 @@ struct EndpointEntry {
 
 pub async fn run(params: Params) -> Result<CallToolResult, rmcp::ErrorData> {
     let fqn = params.fqn.clone();
-    let mut catalog = pay_core::skills::load_skills()
-        .await
-        .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
-    pay_core::skills::ensure_endpoints(&mut catalog, &fqn)
-        .await
-        .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+    let mut catalog = match pay_core::skills::load_skills().await {
+        Ok(catalog) => catalog,
+        Err(err) => {
+            return Ok(super::tool_error(format!(
+                "Failed to load Pay catalog: {err}"
+            )));
+        }
+    };
+    if let Err(err) = pay_core::skills::ensure_endpoints(&mut catalog, &fqn).await {
+        return Ok(super::tool_error(format!(
+            "Failed to load catalog entry `{fqn}`: {err}"
+        )));
+    }
 
     let svc = catalog
         .providers
         .iter()
         .find(|s| s.fqn.eq_ignore_ascii_case(&fqn) || s.name().eq_ignore_ascii_case(&fqn))
-        .ok_or_else(|| {
-            rmcp::ErrorData::invalid_params(format!("Service `{}` not found", fqn), None)
-        })?;
+        .ok_or_else(|| format!("Service `{fqn}` not found"));
+    let svc = match svc {
+        Ok(svc) => svc,
+        Err(message) => return Ok(super::tool_error(message)),
+    };
 
     let content = svc.content.clone();
 
     let base_url = &svc.meta.service_url;
-    let detail = SkillDetail {
+    let detail = CatalogEntryDetail {
         fqn: svc.fqn.clone(),
         title: svc.meta.title.clone(),
         description: svc.meta.description.clone(),
@@ -80,8 +89,14 @@ pub async fn run(params: Params) -> Result<CallToolResult, rmcp::ErrorData> {
         next_step: "Select the endpoint that directly matches the task. Copy its exact `url` into the Pay `curl` tool, make the smallest useful request, and ask before multi-call exploration or unclear pricing.".to_string(),
     };
 
-    let json = serde_json::to_string_pretty(&detail)
-        .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+    let json = match serde_json::to_string_pretty(&detail) {
+        Ok(json) => json,
+        Err(err) => {
+            return Ok(super::tool_error(format!(
+                "Failed to serialize response: {err}"
+            )));
+        }
+    };
 
     Ok(CallToolResult::success(vec![rmcp::model::Content::text(
         json,
@@ -152,8 +167,8 @@ mod tests {
     }
 
     #[test]
-    fn skill_detail_serializes_next_step_guidance() {
-        let detail = SkillDetail {
+    fn catalog_entry_detail_serializes_next_step_guidance() {
+        let detail = CatalogEntryDetail {
             fqn: "example/search".to_string(),
             title: "Example Search".to_string(),
             description: "Search example data".to_string(),
