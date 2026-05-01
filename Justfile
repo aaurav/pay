@@ -48,6 +48,24 @@ install target='deps' *cargo_args:
             ;;
     esac
 
+# Update a target: `just update pay`
+update target:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    case "{{ target }}" in
+        pay)
+            git pull
+            just install pay
+            pay setup --update
+            ;;
+        *)
+            echo "Unknown update target: {{ target }}"
+            echo "Usage: just update pay"
+            exit 1
+            ;;
+    esac
+
 # Lint everything
 lint:
     cd typescript && pnpm --filter @solana/pay lint
