@@ -76,6 +76,9 @@ tempfile = "3"
 # Path expansion
 shellexpand = "3"
 
+# Open URLs in the user's browser (pay topup → MoonPay)
+webbrowser = "1"
+
 # Web framework (for payment middleware)
 axum = "0.8"
 
