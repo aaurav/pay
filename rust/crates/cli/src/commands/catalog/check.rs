@@ -83,9 +83,18 @@ pub struct CheckCommand {
     #[arg(long, short = 'v')]
     pub verbose: bool,
 
-    // ── CI mode ─────────────────────────────────────────────────────────
-    /// Git ref to diff against; only checks `providers/**/*.md` files
-    /// changed between `<REF>` and `HEAD`. Used by PR CI.
+    // ── Diff modes ──────────────────────────────────────────────────────
+    /// Specific provider PAY.md files to check (relative to the registry root
+    /// when `path` is a directory, absolute otherwise). Used by CI to pass a
+    /// pre-computed list without requiring `git` in the runtime container.
+    /// Mutually exclusive with `--changed-from`.
+    #[arg(long, value_name = "PATH", num_args = 1.., conflicts_with = "changed_from")]
+    pub files: Vec<PathBuf>,
+
+    /// Git ref to diff against; checks providers whose `PAY.md` (or any
+    /// sidecar under their directory) changed between `<REF>` and `HEAD`.
+    /// Local-devex shortcut — requires `git` on `$PATH`. CI should use
+    /// `--files` instead.
     #[arg(long, value_name = "REF")]
     pub changed_from: Option<String>,
 }
@@ -97,12 +106,17 @@ impl CheckCommand {
         })?;
 
         if canonical.is_file() {
-            if self.changed_from.is_some() {
+            if self.changed_from.is_some() || !self.files.is_empty() {
                 return Err(pay_core::Error::Config(
-                    "--changed-from requires a registry directory, not a single file".into(),
+                    "--changed-from / --files require a registry directory, not a single file"
+                        .into(),
                 ));
             }
             return self.run_single_file(&canonical);
+        }
+
+        if !self.files.is_empty() {
+            return self.run_explicit_files(&canonical);
         }
 
         if self.changed_from.is_some() {
@@ -161,25 +175,43 @@ impl CheckCommand {
         self.emit_summary(&report, &validation, endpoint_count, "PAY.md")
     }
 
-    // ── Mode 2: changed-from (PR CI) ────────────────────────────────────
+    // ── Mode 2a: explicit list of paths (CI) ────────────────────────────
+
+    fn run_explicit_files(self, root: &Path) -> pay_core::Result<()> {
+        let files = self.files.clone();
+        self.run_with_paths(root, &files, "Changed providers")
+    }
+
+    // ── Mode 2b: changed-from (local devex; requires git on PATH) ───────
 
     fn run_changed_from(self, root: &Path) -> pay_core::Result<()> {
         let base_ref = self.changed_from.clone().expect("checked by caller");
         let files = git_changed_provider_files(root, &base_ref)?;
+        self.run_with_paths(root, &files, "Changed providers")
+    }
+
+    /// Probe + verdict over a pre-computed list of provider PAY.md paths.
+    /// Shared by `--files` and `--changed-from`.
+    fn run_with_paths(
+        self,
+        root: &Path,
+        files: &[PathBuf],
+        title_prefix: &str,
+    ) -> pay_core::Result<()> {
         if files.is_empty() {
             print_notice(
                 NoticeLevel::Info,
                 "Nothing to check",
-                "No changed provider files in the diff.",
+                "No changed provider files.",
             );
             return Ok(());
         }
-        let providers = collect_specific_providers(root, &files)?;
+        let providers = collect_specific_providers(root, files)?;
         if providers.is_empty() {
             print_notice(
                 NoticeLevel::Warning,
                 "No matching providers",
-                "Diff touched no provider files.",
+                "Provided paths did not resolve to any registered providers.",
             );
             return Ok(());
         }
@@ -188,7 +220,7 @@ impl CheckCommand {
         if self.no_probe {
             print_notice(
                 NoticeLevel::Success,
-                "Changed providers check successful",
+                &format!("{title_prefix} check successful"),
                 &format!(
                     "{total_endpoints} endpoints walked across {} provider{}, probe skipped (--no-probe)",
                     providers.len(),
@@ -201,7 +233,7 @@ impl CheckCommand {
         let validation = validate_report(&report, self.strict);
 
         self.render_verbose(&report, &validation);
-        self.emit_summary(&report, &validation, total_endpoints, "Changed providers")
+        self.emit_summary(&report, &validation, total_endpoints, title_prefix)
     }
 
     // ── Mode 3: full registry (read-only) ──────────────────────────────
