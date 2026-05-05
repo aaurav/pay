@@ -67,6 +67,18 @@ When a command, Claude Code, Codex, or another MCP client hits a paid endpoint, 
 pay setup    # Touch ID on macOS, Windows Hello on Windows, GNOME Keyring on Linux, or choose 1Password
 ```
 
+### 📚 Open Source Catalog
+
+The paid API catalog is open source in the [`pay-skills`](https://github.com/solana-foundation/pay-skills) repo.
+
+Anyone can contribute a provider listing, improve endpoint metadata, or add usage guidance for agents. Catalog entries follow the [`pay-skills` contributing guide](https://github.com/solana-foundation/pay-skills/blob/main/CONTRIBUTING.md), which defines the metadata, pricing, endpoint, and usage-note standards that keep **Agent experience** consistent.
+  
+```sh
+  pay skills search "maps"
+```
+
+Good catalog entries make paid APIs easier for both humans and agents to discover, compare, and use safely.
+
 ## Installation
 
 ### Prebuilt Binaries
